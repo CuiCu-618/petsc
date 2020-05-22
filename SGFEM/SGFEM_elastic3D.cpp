@@ -90,10 +90,10 @@ typedef struct {
  |     |
  0-----3
 
-   6-----7
+   5-----6
   /|    /|
  1-----2 |
- | 5---|-8
+ | 4---|-7
  |/    |/
  0-----3
  */
@@ -720,6 +720,75 @@ static PetscErrorCode DMDAGetElementOwnershipRanges3d(DM da,PetscInt **_lx,Petsc
     PetscFunctionReturn(0);
 }
 
+static PetscErrorCode DMDAViewGnuplot3d(DM da,Vec fields,const char comment[],const char prefix[])
+{
+    DM             cda;
+    Vec            coords,local_fields;
+    DMDACoor3d     ***_coords;
+    FILE           *fp;
+    char           fname[PETSC_MAX_PATH_LEN];
+    const char     *field_name;
+    PetscMPIInt    rank;
+    PetscInt       si,sj,sk,nx,ny,nz,i,j,k;
+    PetscInt       n_dofs,d;
+    PetscScalar    *_fields;
+    PetscErrorCode ierr;
+
+    PetscFunctionBeginUser;
+    MPI_Comm_rank(PETSC_COMM_WORLD,&rank);
+    ierr = PetscSNPrintf(fname,sizeof(fname),"%s-p%1.4d.dat",prefix,rank);CHKERRQ(ierr);
+    ierr = PetscFOpen(PETSC_COMM_SELF,fname,"w",&fp);CHKERRQ(ierr);
+    if (!fp) SETERRQ(PETSC_COMM_SELF,PETSC_ERR_USER,"Cannot open file");
+
+    ierr = PetscFPrintf(PETSC_COMM_SELF,fp,"### %s (processor %1.4d) ### \n",comment,rank);CHKERRQ(ierr);
+    ierr = DMDAGetInfo(da,0,0,0,0,0,0,0,&n_dofs,0,0,0,0,0);CHKERRQ(ierr);
+    ierr = PetscFPrintf(PETSC_COMM_SELF,fp,"### x y ");CHKERRQ(ierr);
+    for (d = 0; d < n_dofs; d++) {
+        ierr = DMDAGetFieldName(da,d,&field_name);CHKERRQ(ierr);
+        ierr = PetscFPrintf(PETSC_COMM_SELF,fp,"%s ",field_name);CHKERRQ(ierr);
+    }
+    ierr = PetscFPrintf(PETSC_COMM_SELF,fp,"###\n");CHKERRQ(ierr);
+
+
+    ierr = DMGetCoordinateDM(da,&cda);CHKERRQ(ierr);
+    ierr = DMGetCoordinatesLocal(da,&coords);CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(cda,coords,&_coords);CHKERRQ(ierr);
+    ierr = DMDAGetGhostCorners(cda,&si,&sj,&sk,&nx,&ny,&nz);CHKERRQ(ierr);
+
+    ierr = DMCreateLocalVector(da,&local_fields);CHKERRQ(ierr);
+    ierr = DMGlobalToLocalBegin(da,fields,INSERT_VALUES,local_fields);CHKERRQ(ierr);
+    ierr = DMGlobalToLocalEnd(da,fields,INSERT_VALUES,local_fields);CHKERRQ(ierr);
+    ierr = VecGetArray(local_fields,&_fields);CHKERRQ(ierr);
+
+    for (k = sk; k < sk+nz; k++) {
+        for (j = sj; j < sj + ny; j++) {
+            for (i = si; i < si + nx; i++) {
+                PetscScalar coord_x, coord_y, coord_z;
+                PetscScalar field_d;
+
+                coord_x = _coords[k][j][i].x;
+                coord_y = _coords[k][j][i].y;
+                coord_z = _coords[k][j][i].z;
+
+                ierr = PetscFPrintf(PETSC_COMM_SELF, fp, "%1.6e %1.6e %1.6e ", PetscRealPart(coord_x),
+                                    PetscRealPart(coord_y), PetscRealPart(coord_z));CHKERRQ(ierr);
+                for (d = 0; d < n_dofs; d++) {
+                    field_d = _fields[n_dofs * ((i-si)+(j-sj)*(nx)+(k-sk)*(nx*ny)) + d];
+                    ierr = PetscFPrintf(PETSC_COMM_SELF, fp, "%1.6e ", PetscRealPart(field_d));CHKERRQ(ierr);
+                }
+                ierr = PetscFPrintf(PETSC_COMM_SELF, fp, "\n");CHKERRQ(ierr);
+            }
+        }
+    }
+    ierr = VecRestoreArray(local_fields,&_fields);CHKERRQ(ierr);
+    ierr = VecDestroy(&local_fields);CHKERRQ(ierr);
+
+    ierr = DMDAVecRestoreArray(cda,coords,&_coords);CHKERRQ(ierr);
+
+    ierr = PetscFClose(PETSC_COMM_SELF,fp);CHKERRQ(ierr);
+    PetscFunctionReturn(0);
+}
+
 static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
 {
     DM                     elas_da,da_prop;
@@ -912,6 +981,9 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
 
     ierr = KSPSolve(ksp_E,f,X);CHKERRQ(ierr);
 
+//    VecView(X, PETSC_VIEWER_STDOUT_WORLD);
+    ierr = DMDAViewGnuplot3d(elas_da,X,"Displacement solution for elasticity eqn.","X");CHKERRQ(ierr);
+
     ierr = KSPDestroy(&ksp_E);CHKERRQ(ierr);
 
     ierr = VecDestroy(&X);CHKERRQ(ierr);
@@ -935,8 +1007,8 @@ int main(int argc,char **args)
     ierr = PetscInitialize(&argc,&args,(char*)0,help); if (ierr) return ierr;
     mx   = my = mz = 5;
     ierr = PetscOptionsGetInt(NULL,NULL,"-mx",&mx,NULL);CHKERRQ(ierr);
-    ierr = PetscOptionsGetInt(NULL,NULL,"-my",&mx,NULL);CHKERRQ(ierr);
-    ierr = PetscOptionsGetInt(NULL,NULL,"-mz",&mx,NULL);CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL,NULL,"-my",&my,NULL);CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL,NULL,"-mz",&mz,NULL);CHKERRQ(ierr);
 
     ierr = solve_elasticity_3d(mx,my,mz);CHKERRQ(ierr);
     ierr = PetscFinalize();
@@ -946,10 +1018,155 @@ int main(int argc,char **args)
 
 
 /* -------------------------- helpers for boundary conditions -------------------------------- */
+
+static PetscErrorCode BCApply_FRONT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+{
+    DM                     cda;
+    Vec                    coords;
+    PetscInt               si,sj,sk,nx,ny,nz,i,j,k;
+    PetscInt               M,N,P;
+    DMDACoor3d             ***_coords;
+    const PetscInt         *g_idx;
+    PetscInt               *bc_global_ids;
+    PetscScalar            *bc_vals;
+    PetscInt               nbcs;
+    PetscInt               n_dofs;
+    PetscErrorCode         ierr;
+    ISLocalToGlobalMapping ltogm;
+
+    PetscFunctionBeginUser;
+    /* enforce bc's */
+    ierr = DMGetLocalToGlobalMapping(da,&ltogm);CHKERRQ(ierr);
+    ierr = ISLocalToGlobalMappingGetIndices(ltogm,&g_idx);CHKERRQ(ierr);
+
+    ierr = DMGetCoordinateDM(da,&cda);CHKERRQ(ierr);
+    ierr = DMGetCoordinatesLocal(da,&coords);CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(cda,coords,&_coords);CHKERRQ(ierr);
+    ierr = DMDAGetGhostCorners(cda,&si,&sj,&sk,&nx,&ny,&nz);CHKERRQ(ierr);
+    ierr = DMDAGetInfo(da,0,&M,&N,&P,0,0,0,&n_dofs,0,0,0,0,0);CHKERRQ(ierr);
+
+    /* --- */
+
+    ierr = PetscMalloc1(nx*nz*n_dofs,&bc_global_ids);CHKERRQ(ierr);
+    ierr = PetscMalloc1(nx*nz*n_dofs,&bc_vals);CHKERRQ(ierr);
+
+    /* init the entries to -1 so VecSetValues will ignore them */
+    for (i = 0; i < nx*nz*n_dofs; i++) bc_global_ids[i] = -1;
+
+    j = 0;
+    for (k = 0; k < nz; k++) {
+        for (i = 0; i < nx; i++) {
+            PetscInt local_id;
+            PetscScalar coordx, coordy, coordz;
+
+            local_id = j*nx + i + k*nx*ny;
+
+            bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
+
+            coordx = _coords[k+sk][j+sj][i+si].x;
+            coordy = _coords[k+sk][j+sj][i+si].y;
+            coordz = _coords[k+sk][j+sj][i+si].z;
+
+            bc_vals[i+k*nx] = bc_val;
+        }
+    }
+    ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
+    nbcs = 0;
+    if (sj == 0) nbcs = nx*nz;
+
+    if (b) {
+        ierr = VecSetValues(b,nbcs,bc_global_ids,bc_vals,INSERT_VALUES);CHKERRQ(ierr);
+        ierr = VecAssemblyBegin(b);CHKERRQ(ierr);
+        ierr = VecAssemblyEnd(b);CHKERRQ(ierr);
+    }
+    if (A) {
+        ierr = MatZeroRows(A,nbcs,bc_global_ids,1.0,0,0);CHKERRQ(ierr);
+    }
+
+    ierr = PetscFree(bc_vals);CHKERRQ(ierr);
+    ierr = PetscFree(bc_global_ids);CHKERRQ(ierr);
+
+    ierr = DMDAVecRestoreArray(cda,coords,&_coords);CHKERRQ(ierr);
+    PetscFunctionReturn(0);
+}
+
+static PetscErrorCode BCApply_BACK(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+{
+    DM                     cda;
+    Vec                    coords;
+    PetscInt               si,sj,sk,nx,ny,nz,i,j,k;
+    PetscInt               M,N,P;
+    DMDACoor3d             ***_coords;
+    const PetscInt         *g_idx;
+    PetscInt               *bc_global_ids;
+    PetscScalar            *bc_vals;
+    PetscInt               nbcs;
+    PetscInt               n_dofs;
+    PetscErrorCode         ierr;
+    ISLocalToGlobalMapping ltogm;
+
+    PetscFunctionBeginUser;
+    /* enforce bc's */
+    ierr = DMGetLocalToGlobalMapping(da,&ltogm);CHKERRQ(ierr);
+    ierr = ISLocalToGlobalMappingGetIndices(ltogm,&g_idx);CHKERRQ(ierr);
+
+    ierr = DMGetCoordinateDM(da,&cda);CHKERRQ(ierr);
+    ierr = DMGetCoordinatesLocal(da,&coords);CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(cda,coords,&_coords);CHKERRQ(ierr);
+    ierr = DMDAGetGhostCorners(cda,&si,&sj,&sk,&nx,&ny,&nz);CHKERRQ(ierr);
+    ierr = DMDAGetInfo(da,0,&M,&N,&P,0,0,0,&n_dofs,0,0,0,0,0);CHKERRQ(ierr);
+
+    /* --- */
+
+    ierr = PetscMalloc1(nx*nz*n_dofs,&bc_global_ids);CHKERRQ(ierr);
+    ierr = PetscMalloc1(nx*nz*n_dofs,&bc_vals);CHKERRQ(ierr);
+
+    /* init the entries to -1 so VecSetValues will ignore them */
+    for (i = 0; i < nx*nz*n_dofs; i++) bc_global_ids[i] = -1;
+
+    j = ny-1;
+    for (k = 0; k < nz; k++) {
+        for (i = 0; i < nx; i++) {
+            PetscInt local_id;
+            PetscScalar coordx, coordy, coordz;
+
+            local_id = j*nx + i + k*nx*ny;
+
+            bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
+
+            coordx = _coords[k+sk][j+sj][i+si].x;
+            coordy = _coords[k+sk][j+sj][i+si].y;
+            coordz = _coords[k+sk][j+sj][i+si].z;
+
+            bc_vals[i+k*nx] = bc_val;
+        }
+    }
+    ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
+    nbcs = 0;
+    if (sj+ny == N) nbcs = nx*nz;
+
+    if (b) {
+        ierr = VecSetValues(b,nbcs,bc_global_ids,bc_vals,INSERT_VALUES);CHKERRQ(ierr);
+        ierr = VecAssemblyBegin(b);CHKERRQ(ierr);
+        ierr = VecAssemblyEnd(b);CHKERRQ(ierr);
+    }
+    if (A) {
+        ierr = MatZeroRows(A,nbcs,bc_global_ids,1.0,0,0);CHKERRQ(ierr);
+    }
+
+    ierr = PetscFree(bc_vals);CHKERRQ(ierr);
+    ierr = PetscFree(bc_global_ids);CHKERRQ(ierr);
+
+    ierr = DMDAVecRestoreArray(cda,coords,&_coords);CHKERRQ(ierr);
+    PetscFunctionReturn(0);
+}
+
 static PetscErrorCode DMDABCApplyCompression(DM elas_da,Mat A,Vec f)
 {
     PetscErrorCode ierr;
 
     PetscFunctionBeginUser;
+    ierr = BCApply_FRONT(elas_da,0,-1.0,A,f);CHKERRQ(ierr);
+    ierr = BCApply_BACK(elas_da,0,1.0,A,f);CHKERRQ(ierr);
     PetscFunctionReturn(0);
 }
