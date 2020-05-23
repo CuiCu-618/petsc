@@ -31,6 +31,7 @@ static PetscErrorCode DMDABCApplyCompression(DM,Mat,Vec);
 #define NODES_PER_EL   8 /* nodes per element */
 #define U_DOFS         3 /* dofs per node */
 #define GAUSS_POINTS   8
+#define GAUSS_POINTS_B 24
 
 /* SGFEM basic info */
 #define Q       1 /* degree of Herminte PU */
@@ -47,14 +48,17 @@ typedef struct {
 /* Gauss point based evaluation*/
 typedef struct {
     PetscScalar gp_coords[NSD*GAUSS_POINTS];
+    PetscScalar gpb_coords[NSD*GAUSS_POINTS_B];
     PetscScalar E[GAUSS_POINTS];
     PetscScalar nu[GAUSS_POINTS];
+    PetscScalar E_B[GAUSS_POINTS_B];
+    PetscScalar nu_B[GAUSS_POINTS_B];
     PetscScalar fx[GAUSS_POINTS];
     PetscScalar fy[GAUSS_POINTS];
     PetscScalar fz[GAUSS_POINTS];
-    PetscScalar gx[GAUSS_POINTS];
-    PetscScalar gy[GAUSS_POINTS];
-    PetscScalar gz[GAUSS_POINTS];
+    PetscScalar gx[NSD*GAUSS_POINTS_B];   /* ux_x, ux_y, ux_z */
+    PetscScalar gy[NSD*GAUSS_POINTS_B];   /* uy_x, uy_y, uy_z */
+    PetscScalar gz[NSD*GAUSS_POINTS_B];   /* uz_x, uz_y, uz_z */
 } GaussPointCoefficients;
 
 typedef struct {
@@ -90,10 +94,10 @@ typedef struct {
  |     |
  0-----3
 
-   5-----6
+   6-----7
   /|    /|
- 1-----2 |
- | 4---|-7
+ 5-----8 |
+ | 1---|-2
  |/    |/
  0-----3
  */
@@ -242,6 +246,44 @@ static void ConstructGaussQuadrature3D(PetscInt *ngp,PetscScalar gp_xi[][NSD],Pe
     gp_weight[5] = 1.0;
     gp_weight[6] = 1.0;
     gp_weight[7] = 1.0;
+}
+
+static void ConstructBoundaryGaussQuadrature3D(PetscInt *ngpb,PetscScalar gpb_xi[][NSD],PetscScalar gpb_weight[])
+{
+    *ngpb         = 24;
+    gpb_xi[0][0]  =  1.0;          gpb_xi[0][1] = -0.57735026919;gpb_xi[0][2] = -0.57735026919;
+    gpb_xi[1][0]  =  1.0;          gpb_xi[1][1] =  0.57735026919;gpb_xi[1][2] = -0.57735026919;
+    gpb_xi[2][0]  =  1.0;          gpb_xi[2][1] = -0.57735026919;gpb_xi[2][2] =  0.57735026919;
+    gpb_xi[3][0]  =  1.0;          gpb_xi[3][1] =  0.57735026919;gpb_xi[3][2] =  0.57735026919;
+
+    gpb_xi[4][0]  = -1.0;          gpb_xi[4][1] = -0.57735026919;gpb_xi[4][2] = -0.57735026919;
+    gpb_xi[5][0]  = -1.0;          gpb_xi[5][1] =  0.57735026919;gpb_xi[5][2] = -0.57735026919;
+    gpb_xi[6][0]  = -1.0;          gpb_xi[6][1] = -0.57735026919;gpb_xi[6][2] =  0.57735026919;
+    gpb_xi[7][0]  = -1.0;          gpb_xi[7][1] =  0.57735026919;gpb_xi[7][2] =  0.57735026919;
+
+    gpb_xi[8][0]  = -0.57735026919; gpb_xi[8][1]  =  1.0;          gpb_xi[8][2]  = -0.57735026919;
+    gpb_xi[9][0]  =  0.57735026919; gpb_xi[9][1]  =  1.0;          gpb_xi[9][2]  = -0.57735026919;
+    gpb_xi[10][0] = -0.57735026919; gpb_xi[10][1] =  1.0;          gpb_xi[10][2] =  0.57735026919;
+    gpb_xi[11][0] =  0.57735026919; gpb_xi[11][1] =  1.0;          gpb_xi[11][2] =  0.57735026919;
+
+    gpb_xi[12][0] = -0.57735026919; gpb_xi[12][1] = -1.0;          gpb_xi[12][2] = -0.57735026919;
+    gpb_xi[13][0] =  0.57735026919; gpb_xi[13][1] = -1.0;          gpb_xi[13][2] = -0.57735026919;
+    gpb_xi[14][0] = -0.57735026919; gpb_xi[14][1] = -1.0;          gpb_xi[14][2] =  0.57735026919;
+    gpb_xi[15][0] =  0.57735026919; gpb_xi[15][1] = -1.0;          gpb_xi[15][2] =  0.57735026919;
+
+    gpb_xi[16][0] = -0.57735026919; gpb_xi[16][1] = -0.57735026919; gpb_xi[16][2]  =  1.0;
+    gpb_xi[17][0] =  0.57735026919; gpb_xi[17][1] = -0.57735026919; gpb_xi[17][2]  =  1.0;
+    gpb_xi[18][0] = -0.57735026919; gpb_xi[18][1] =  0.57735026919; gpb_xi[18][2]  =  1.0;
+    gpb_xi[19][0] =  0.57735026919; gpb_xi[19][1] =  0.57735026919; gpb_xi[19][2]  =  1.0;
+
+    gpb_xi[20][0] = -0.57735026919; gpb_xi[20][1] = -0.57735026919; gpb_xi[20][2]  = -1.0;
+    gpb_xi[21][0] =  0.57735026919; gpb_xi[21][1] = -0.57735026919; gpb_xi[21][2]  = -1.0;
+    gpb_xi[22][0] = -0.57735026919; gpb_xi[22][1] =  0.57735026919; gpb_xi[22][2]  = -1.0;
+    gpb_xi[23][0] =  0.57735026919; gpb_xi[23][1] =  0.57735026919; gpb_xi[23][2]  = -1.0;
+
+    for (PetscInt i = 0; i < 24; i++){
+        gpb_weight[i] = 1.0;
+    }
 }
 
 /*
@@ -440,7 +482,7 @@ static void FormStressOperatorQ13D(PetscScalar Ke[],PetscScalar coords[],PetscSc
         /* form D for the quadrature point */
         prop_E          = E[p];
         prop_nu         = nu[p];
-        factor          = prop_E / ((1.0+prop_nu)*(1.0-2.0*prop_nu));
+        factor          = prop_E*(1-prop_nu) / ((1.0+prop_nu)*(1.0-2.0*prop_nu));
 
         PetscMemzero(constit_D, sizeof(constit_D));
         constit_D[0][0] = 1.0; constit_D[0][1] = prop_nu/(1-prop_nu); constit_D[0][2] = prop_nu/(1-prop_nu);
@@ -501,6 +543,102 @@ static void FormMomentumRhsQ13D(PetscScalar Fe[],PetscScalar coords[],PetscScala
     }
 }
 
+static void ImposeNaturalBCQ13D(PetscScalar Ge[],PetscScalar coords[],PetscScalar gx[],PetscScalar gy[],PetscScalar gz[],PetscScalar E[],PetscScalar nu[])
+{
+    PetscInt    ngpb;
+    PetscScalar gp_xi[GAUSS_POINTS_B][NSD];
+    PetscScalar gp_weight[GAUSS_POINTS_B];
+    PetscInt    p,i,j;
+    PetscScalar Ni_p[NODES_PER_EL];
+    PetscScalar J_p,fac,nhat[NSD];
+    PetscScalar dx,dy,dz;
+    PetscScalar prop_E,prop_nu,factor,constit_D[6][6];
+    PetscScalar strain[6],sigma[3][3];
+
+    dx = PetscAbs(coords[0]-coords[9]);
+    dy = PetscAbs(coords[1]-coords[4]);
+    dz = PetscAbs(coords[2]-coords[14]);
+
+    /* define quadrature rule */
+    ConstructBoundaryGaussQuadrature3D(&ngpb,gp_xi,gp_weight);
+
+    /* evaluate integral */
+    for (p = 0; p < ngpb; p++) {
+
+        ShapeFunctionQ13D_Evaluate(gp_xi[p],Ni_p);
+//        ShapeFunctionQ13D_Evaluate_dxi(gp_xi[p],GNi_p);
+//        ShapeFunctionQ13D_Evaluate_dx(GNi_p,GNx_p,coords,&J_p);
+//        fac = gp_weight[p]*J_p;
+
+        /* form D for the quadrature point */
+        prop_E          = E[p];
+        prop_nu         = nu[p];
+        factor          = prop_E*(1-prop_nu) / ((1.0+prop_nu)*(1.0-2.0*prop_nu));
+        PetscMemzero(constit_D, sizeof(constit_D));
+        constit_D[0][0] = 1.0; constit_D[0][1] = prop_nu/(1-prop_nu); constit_D[0][2] = prop_nu/(1-prop_nu);
+        constit_D[1][0] = prop_nu/(1-prop_nu); constit_D[1][1] = 1.0; constit_D[1][2] = prop_nu/(1-prop_nu);
+        constit_D[2][0] = prop_nu/(1-prop_nu); constit_D[2][1] = prop_nu/(1-prop_nu); constit_D[2][2] = 1.0;
+        constit_D[3][3] = 0.5*(1-2*prop_nu)/(1-prop_nu);
+        constit_D[4][4] = 0.5*(1-2*prop_nu)/(1-prop_nu);
+        constit_D[5][5] = 0.5*(1-2*prop_nu)/(1-prop_nu);
+        for (i = 0; i < 6; i++) {
+            for (j = 0; j < 6; j++) {
+                constit_D[i][j] = factor * constit_D[i][j];
+            }
+        }
+
+        /* form sigma for the quadrature point */
+        PetscScalar z[6];
+        PetscMemzero(z, sizeof(z));
+        strain[0] = gx[NSD*p]; strain[1] = gy[NSD*p+1]; strain[2] = gz[NSD*p+2];
+        strain[3] = gx[NSD*p+1] + gy[NSD*p];
+        strain[4] = gy[NSD*p+2] + gz[NSD*p+1];
+        strain[5] = gx[NSD*p+2] + gz[NSD*p];
+        for (i = 0; i < 6; i++){
+            for (j = 0; j < 6; j++){
+                z[i] = z[i] + constit_D[i][j] * strain[j];
+            }
+        }
+        sigma[0][0] = z[0]; sigma[0][1] = z[3]; sigma[0][2] = z[5];
+        sigma[1][0] = z[3]; sigma[1][1] = z[1]; sigma[1][2] = z[4];
+        sigma[2][0] = z[5]; sigma[2][1] = z[4]; sigma[2][2] = z[2];
+
+        /* directional derivative */
+        if (p < 4){
+            nhat[0] = 1.0; nhat[1] = 0.0; nhat[2] = 0.0;
+            J_p = (0.5*dy)*(0.5*dz);
+        }else if (p < 8) {
+            nhat[0] = -1.0; nhat[1] = 0.0; nhat[2] = 0.0;
+            J_p = (0.5*dy)*(0.5*dz);
+        }else if (p < 12) {
+            nhat[0] = 0.0; nhat[1] = 1.0; nhat[2] = 0.0;
+            J_p = (0.5*dx)*(0.5*dz);
+        }else if (p < 16) {
+            nhat[0] = 0.0; nhat[1] = -1.0; nhat[2] = 0.0;
+            J_p = (0.5*dx)*(0.5*dz);
+        }else if (p < 20) {
+            nhat[0] = 0.0; nhat[1] = 0.0; nhat[2] = 1.0;
+            J_p = (0.5*dx)*(0.5*dy);
+        }else {
+            nhat[0] = 0.0; nhat[1] = 0.0; nhat[2] = -1.0;
+            J_p = (0.5*dx)*(0.5*dy);
+        }
+        fac = gp_weight[p]*J_p;
+
+        /* sigma x nhat */
+        PetscScalar sn[3];
+        for (i = 0; i < 3; i++) {
+            sn[i] = sigma[i][0]*nhat[0] + sigma[i][1]*nhat[1] + sigma[i][2]*nhat[2];
+        }
+
+        for (i = 0; i < NODES_PER_EL; i++) {
+            Ge[NSD*i]   += fac*Ni_p[i]*sn[0];
+            Ge[NSD*i+1] += fac*Ni_p[i]*sn[1];
+            Ge[NSD*i+2] += fac*Ni_p[i]*sn[2];
+        }
+    }
+}
+
 static PetscErrorCode AssembleA_Elasticity(Mat A,DM elas_da,DM properties_da,Vec properties)
 {
     DM                     cda;
@@ -530,7 +668,7 @@ static PetscErrorCode AssembleA_Elasticity(Mat A,DM elas_da,DM properties_da,Vec
 
     ierr = DMDAGetElementsCorners(elas_da,&sex,&sey,&sez);CHKERRQ(ierr);
     ierr = DMDAGetElementsSizes(elas_da,&mx,&my,&mz);CHKERRQ(ierr);
-    for (ek = sez; ek < sez+mz; ek++) {
+    for (ek = sez; ek < sez + mz; ek++) {
         for (ej = sey; ej < sey + my; ej++) {
             for (ei = sex; ei < sex + mx; ei++) {
                 /* get coords for the element */
@@ -571,11 +709,13 @@ static PetscErrorCode AssembleF_Elasticity(Vec F,DM elas_da,DM properties_da,Vec
     MatStencil             u_eqn[NODES_PER_EL*U_DOFS]; /* 3 degrees of freedom */
     PetscInt               sex,sey,sez,mx,my,mz;
     PetscInt               ei,ej,ek;
-    PetscScalar            Fe[NODES_PER_EL*U_DOFS];
+    PetscScalar            Fe[NODES_PER_EL*U_DOFS],Ge[NODES_PER_EL*U_DOFS];
     PetscScalar            el_coords[NODES_PER_EL*NSD];
     Vec                    local_properties;
     GaussPointCoefficients ***props;
     PetscScalar            *prop_fx,*prop_fy,*prop_fz;
+    PetscScalar            *prop_gx,*prop_gy,*prop_gz;
+    PetscScalar            *prop_E,*prop_nu;
     Vec                    local_F;
     ElasticityDOF          ***ff;
     PetscErrorCode         ierr;
@@ -610,16 +750,26 @@ static PetscErrorCode AssembleF_Elasticity(Vec F,DM elas_da,DM properties_da,Vec
                 prop_fy = props[ek][ej][ei].fy;
                 prop_fz = props[ek][ej][ei].fz;
 
+                prop_gx = props[ek][ej][ei].gx;
+                prop_gy = props[ek][ej][ei].gy;
+                prop_gz = props[ek][ej][ei].gz;
+
+                prop_E  = props[ek][ej][ei].E_B;
+                prop_nu = props[ek][ej][ei].nu_B;
+
                 /* initialise element stiffness matrix */
                 ierr = PetscMemzero(Fe, sizeof(Fe));CHKERRQ(ierr);
+                ierr = PetscMemzero(Ge, sizeof(Ge));CHKERRQ(ierr);
 
                 /* form element stiffness matrix */
                 FormMomentumRhsQ13D(Fe, el_coords, prop_fx, prop_fy, prop_fz);
+                ImposeNaturalBCQ13D(Ge, el_coords, prop_gx, prop_gy, prop_gz, prop_E, prop_nu);
 
                 /* insert element matrix into global matrix */
                 ierr = DMDAGetElementEqnums3D_u(u_eqn, ei, ej, ek);CHKERRQ(ierr);
 
                 ierr = DMDASetValuesLocalStencil3D_ADD_VALUES(ff, u_eqn, Fe);CHKERRQ(ierr);
+                ierr = DMDASetValuesLocalStencil3D_ADD_VALUES(ff, u_eqn, Ge);CHKERRQ(ierr);
             }
         }
     }
@@ -660,7 +810,7 @@ static PetscErrorCode DMDAGetElementOwnershipRanges3d(DM da,PetscInt **_lx,Petsc
 
     ierr = PetscMalloc1(cpu_x,&LX);CHKERRQ(ierr);
     ierr = PetscMalloc1(cpu_y,&LY);CHKERRQ(ierr);
-    ierr = PetscMalloc1(cpu_x,&LZ);CHKERRQ(ierr);
+    ierr = PetscMalloc1(cpu_z,&LZ);CHKERRQ(ierr);
 
     ierr = DMDAGetElementsSizes(da,&local_mx,&local_my,&local_mz);CHKERRQ(ierr);
     ierr = VecCreate(PETSC_COMM_WORLD,&vlx);CHKERRQ(ierr);
@@ -789,26 +939,32 @@ static PetscErrorCode DMDAViewGnuplot3d(DM da,Vec fields,const char comment[],co
     PetscFunctionReturn(0);
 }
 
-static void evaluate_Elastic(PetscReal pos[], PetscReal vel[], PetscReal Fm[], PetscReal Gm[])
+static void evaluate_Elastic(PetscReal pos[],PetscReal vel[],PetscReal Fm[],PetscReal Gm[][NSD],PetscScalar E,PetscScalar nu)
 {
     PetscReal x,y,z;
     x = pos[0];
     y = pos[1];
     z = pos[2];
     if (vel) {
-        vel[0] = 0.0;
+        vel[0] = PetscSinReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*PetscSinReal(PETSC_PI*z);
         vel[1] = 0.0;
         vel[2] = 0.0;
     }
     if (Fm) {
-        Fm[0] = 0.0;
-        Fm[1] = 0.0;
-        Fm[2] = 0.0;
+        Fm[0] = (E*PETSC_PI*PETSC_PI*PetscSinReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*
+                PetscSinReal(PETSC_PI*z)*(3*nu-2))/(2*nu*nu+nu-1);
+        Fm[1] = (E*PETSC_PI*PETSC_PI*PetscCosReal(PETSC_PI*x)*PetscCosReal(PETSC_PI*y)*
+                PetscSinReal(PETSC_PI*z))/(2*(2*nu*nu+nu-1));
+        Fm[2] = (E*PETSC_PI*PETSC_PI*PetscCosReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*
+                PetscCosReal(PETSC_PI*z))/(2*(2*nu*nu+nu-1));
     }
     if (Gm) {
-        Gm[0] = 0.0;
-        Gm[1] = 0.0;
-        Gm[2] = 0.0;
+        Gm[0][0] = PETSC_PI*PetscCosReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*PetscSinReal(PETSC_PI*z);
+        Gm[0][1] = PETSC_PI*PetscSinReal(PETSC_PI*x)*PetscCosReal(PETSC_PI*y)*PetscSinReal(PETSC_PI*z);
+        Gm[0][2] = PETSC_PI*PetscSinReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*PetscCosReal(PETSC_PI*z);
+
+        Gm[1][0] = Gm[1][1] = Gm[1][2] = 0;
+        Gm[2][0] = Gm[2][1] = Gm[2][2] = 0;
     }
 }
 
@@ -850,7 +1006,7 @@ static PetscErrorCode DMDACreateManufacturedSolution(PetscInt mx,PetscInt my,Pet
                 pos[1] = PetscRealPart(_coords[k][j][i].y);
                 pos[2] = PetscRealPart(_coords[k][j][i].z);
 
-                evaluate_Elastic(pos,vel,NULL,NULL);
+                evaluate_Elastic(pos,vel,NULL,NULL,0,0);
 
                 _elastic[k][j][i].ux_dof = vel[0];
                 _elastic[k][j][i].uy_dof = vel[1];
@@ -1009,7 +1165,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
      FEM has a 9-point stencil (BOX) or connectivity pattern
      Num nodes in each direction is mx+1, my+1
      */
-    u_dof         = U_DOFS; /* Ux, Uy , Uz */
+    u_dof         = U_DOFS; /* Ux, Uy, Uz */
     dof           = u_dof;
     stencil_width = 1;
     ierr          = DMDACreate3d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
@@ -1045,6 +1201,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
 
     ierr = PetscFree(lx);CHKERRQ(ierr);
     ierr = PetscFree(ly);CHKERRQ(ierr);
+    ierr = PetscFree(lz);CHKERRQ(ierr);
 
     /* define centroid positions */
     ierr = DMDAGetInfo(da_prop,0,&M,&N,&P,0,0,0,0,0,0,0,0,0);CHKERRQ(ierr);
@@ -1073,41 +1230,68 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
         for (j = sj; j < sj+ny; j++) {
             for (i = si; i < si+nx; i++) {
                 /* get coords for the element */
-                PetscInt               ngp;
-                PetscScalar            gp_xi[GAUSS_POINTS][NSD],gp_weight[GAUSS_POINTS];
-                PetscScalar            el_coords[NSD*NODES_PER_EL];
+                PetscInt ngp;
+                PetscScalar gp_xi[GAUSS_POINTS][NSD], gp_weight[GAUSS_POINTS];
+                PetscScalar el_coords[NSD * NODES_PER_EL];
 
-                ierr = GetElementCoords3D(_vel_coords,i,j,k,el_coords);CHKERRQ(ierr);
-                ConstructGaussQuadrature3D(&ngp,gp_xi,gp_weight);
+                ierr = GetElementCoords3D(_vel_coords, i, j, k, el_coords);CHKERRQ(ierr);
+                ConstructGaussQuadrature3D(&ngp, gp_xi, gp_weight);
 
                 for (p = 0; p < GAUSS_POINTS; p++) {
-                    PetscScalar xi_p[NSD],Ni_p[NODES_PER_EL];
-                    PetscScalar gp_x,gp_y,gp_z;
-                    PetscInt    n;
+                    PetscScalar xi_p[NSD], Ni_p[NODES_PER_EL];
+                    PetscScalar gp_x, gp_y, gp_z;
+                    PetscInt n;
 
                     xi_p[0] = gp_xi[p][0];
                     xi_p[1] = gp_xi[p][1];
                     xi_p[2] = gp_xi[p][2];
-                    ShapeFunctionQ13D_Evaluate(xi_p,Ni_p);
+                    ShapeFunctionQ13D_Evaluate(xi_p, Ni_p);
 
                     gp_x = gp_y = gp_z = 0.0;
                     for (n = 0; n < NODES_PER_EL; n++) {
-                        gp_x = gp_x+Ni_p[n]*el_coords[NSD*n];
-                        gp_y = gp_y+Ni_p[n]*el_coords[NSD*n+1];
-                        gp_z = gp_z+Ni_p[n]*el_coords[NSD*n+2];
+                        gp_x = gp_x + Ni_p[n] * el_coords[NSD * n];
+                        gp_y = gp_y + Ni_p[n] * el_coords[NSD * n + 1];
+                        gp_z = gp_z + Ni_p[n] * el_coords[NSD * n + 2];
                     }
-                    element_props[k][j][i].gp_coords[NSD*p]   = gp_x;
-                    element_props[k][j][i].gp_coords[NSD*p+1] = gp_y;
-                    element_props[k][j][i].gp_coords[NSD*p+2] = gp_z;
+                    element_props[k][j][i].gp_coords[NSD * p]     = gp_x;
+                    element_props[k][j][i].gp_coords[NSD * p + 1] = gp_y;
+                    element_props[k][j][i].gp_coords[NSD * p + 2] = gp_z;
+                }
+                /* get coords for the element boundary */
+                PetscInt ngpb;
+                PetscScalar gpb_xi[GAUSS_POINTS_B][NSD], gpb_weight[GAUSS_POINTS_B];
+
+                ierr = GetElementCoords3D(_vel_coords, i, j, k, el_coords);CHKERRQ(ierr);
+                ConstructBoundaryGaussQuadrature3D(&ngpb, gpb_xi, gpb_weight);
+
+                for (p = 0; p < GAUSS_POINTS_B; p++) {
+                    PetscScalar xib_p[NSD], Nib_p[NODES_PER_EL];
+                    PetscScalar gpb_x, gpb_y, gpb_z;
+                    PetscInt n;
+
+                    xib_p[0] = gpb_xi[p][0];
+                    xib_p[1] = gpb_xi[p][1];
+                    xib_p[2] = gpb_xi[p][2];
+                    ShapeFunctionQ13D_Evaluate(xib_p, Nib_p);
+
+                    gpb_x = gpb_y = gpb_z = 0.0;
+                    for (n = 0; n < NODES_PER_EL; n++) {
+                        gpb_x = gpb_x + Nib_p[n] * el_coords[NSD * n];
+                        gpb_y = gpb_y + Nib_p[n] * el_coords[NSD * n + 1];
+                        gpb_z = gpb_z + Nib_p[n] * el_coords[NSD * n + 2];
+                    }
+                    element_props[k][j][i].gpb_coords[NSD * p]     = gpb_x;
+                    element_props[k][j][i].gpb_coords[NSD * p + 1] = gpb_y;
+                    element_props[k][j][i].gpb_coords[NSD * p + 2] = gpb_z;
                 }
             }
         }
     }
-    for (k = sk; k < sk+nz; k++) {
+    for (k = sk; k < sk + nz; k++) {
         for (j = sj; j < sj + ny; j++) {
             for (i = si; i < si + nx; i++) {
                 PetscScalar coord_x, coord_y, coord_z;
-                PetscReal   pos[NSD], Fm[NSD], Gm[NSD];
+                PetscReal   pos[NSD], Fm[NSD], Gm[NSD][NSD];
                 PetscScalar opts_E, opts_nu;
 
                 opts_E = 1.0;
@@ -1124,7 +1308,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
                     pos[1] = coord_y;
                     pos[2] = coord_z;
 
-                    evaluate_Elastic(pos, NULL, Fm, Gm);
+                    evaluate_Elastic(pos, NULL, Fm, NULL, opts_E, opts_nu);
 
                     element_props[k][j][i].E[p] = opts_E;
                     element_props[k][j][i].nu[p] = opts_nu;
@@ -1132,10 +1316,33 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
                     element_props[k][j][i].fx[p] = Fm[0];
                     element_props[k][j][i].fy[p] = Fm[1];
                     element_props[k][j][i].fz[p] = Fm[2];
+                }
 
-                    element_props[k][j][i].gx[p] = Gm[0];
-                    element_props[k][j][i].gy[p] = Gm[1];
-                    element_props[k][j][i].gz[p] = Gm[2];
+                for (p = 0; p < GAUSS_POINTS_B; p++) {
+                    coord_x = element_props[k][j][i].gpb_coords[NSD*p];
+                    coord_y = element_props[k][j][i].gpb_coords[NSD*p+1];
+                    coord_z = element_props[k][j][i].gpb_coords[NSD*p+2];
+
+                    pos[0] = coord_x;
+                    pos[1] = coord_y;
+                    pos[2] = coord_z;
+
+                    evaluate_Elastic(pos, NULL, NULL, Gm, opts_E, opts_nu);
+
+                    element_props[k][j][i].E_B[p] = opts_E;
+                    element_props[k][j][i].nu_B[p] = opts_nu;
+
+                    element_props[k][j][i].gx[NSD*p]   = Gm[0][0];
+                    element_props[k][j][i].gx[NSD*p+1] = Gm[0][1];
+                    element_props[k][j][i].gx[NSD*p+2] = Gm[0][2];
+
+                    element_props[k][j][i].gy[NSD*p]   = Gm[1][0];
+                    element_props[k][j][i].gy[NSD*p+1] = Gm[1][1];
+                    element_props[k][j][i].gy[NSD*p+2] = Gm[1][2];
+
+                    element_props[k][j][i].gz[NSD*p]   = Gm[2][0];
+                    element_props[k][j][i].gz[NSD*p+1] = Gm[2][1];
+                    element_props[k][j][i].gz[NSD*p+2] = Gm[2][2];
                 }
             }
         }
@@ -1168,16 +1375,16 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
     ierr = KSPSetOptionsPrefix(ksp_E,"elas_");CHKERRQ(ierr);  /* elasticity */
 
     /* solve */
-//    ierr = DMDABCApplyCompression(elas_da,A,f);CHKERRQ(ierr);
+    ierr = DMDABCApplyCompression(elas_da,A,f);CHKERRQ(ierr);
 
     ierr = KSPSetOperators(ksp_E,A,A);CHKERRQ(ierr);
     ierr = KSPSetFromOptions(ksp_E);CHKERRQ(ierr);
 
     ierr = KSPSolve(ksp_E,f,X);CHKERRQ(ierr);
 
-//    VecView(X, PETSC_VIEWER_STDOUT_WORLD);
     ierr = DMDAViewGnuplot3d(elas_da,X,"Displacement solution for elasticity eqn.","X");CHKERRQ(ierr);
-
+    ierr = MatViewFromOptions(A, NULL, "-amat_view");CHKERRQ(ierr);
+    ierr = VecViewFromOptions(f, NULL, "-fvec_view");CHKERRQ(ierr);
     /* verify */
     DM  da_elastic_analytic;
     Vec X_analytic;
@@ -1204,12 +1411,18 @@ int main(int argc,char **args)
 {
     PetscErrorCode  ierr;
     PetscInt        mx,my,mz;
+    PetscInt        nel = -1;
 
     ierr = PetscInitialize(&argc,&args,(char*)0,help); if (ierr) return ierr;
     mx   = my = mz = 5;
     ierr = PetscOptionsGetInt(NULL,NULL,"-mx",&mx,NULL);CHKERRQ(ierr);
     ierr = PetscOptionsGetInt(NULL,NULL,"-my",&my,NULL);CHKERRQ(ierr);
     ierr = PetscOptionsGetInt(NULL,NULL,"-mz",&mz,NULL);CHKERRQ(ierr);
+    ierr = PetscOptionsGetInt(NULL,NULL,"-nel",&nel,NULL);CHKERRQ(ierr);
+
+    if(nel > 0){
+        mx   = my = mz = nel;
+    }
 
     ierr = solve_elasticity_3d(mx,my,mz);CHKERRQ(ierr);
     ierr = PetscFinalize();
@@ -1220,7 +1433,7 @@ int main(int argc,char **args)
 
 /* -------------------------- helpers for boundary conditions -------------------------------- */
 
-static PetscErrorCode BCApply_FRONT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+static PetscErrorCode BCApply_FRONT(DM da,PetscInt d_idx,PetscScalar *bc_val,Mat A,Vec b)
 {
     DM                     cda;
     Vec                    coords;
@@ -1258,17 +1471,23 @@ static PetscErrorCode BCApply_FRONT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat 
     for (k = 0; k < nz; k++) {
         for (i = 0; i < nx; i++) {
             PetscInt local_id;
-            PetscScalar coordx, coordy, coordz;
+            PetscReal pos[NSD],vel[NSD];
+
+            pos[0] = PetscRealPart(_coords[k+sk][j+sj][i+si].x);
+            pos[1] = PetscRealPart(_coords[k+sk][j+sj][i+si].y);
+            pos[2] = PetscRealPart(_coords[k+sk][j+sj][i+si].z);
+
+            evaluate_Elastic(pos,vel,NULL,NULL,0,0);
 
             local_id = j*nx + i + k*nx*ny;
 
             bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
 
-            coordx = _coords[k+sk][j+sj][i+si].x;
-            coordy = _coords[k+sk][j+sj][i+si].y;
-            coordz = _coords[k+sk][j+sj][i+si].z;
-
-            bc_vals[i+k*nx] = bc_val;
+            if (bc_val) {
+                bc_vals[i + k * nx] = *bc_val;
+            } else {
+                bc_vals[i + k * nx] = vel[d_idx];
+            }
         }
     }
     ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
@@ -1291,7 +1510,7 @@ static PetscErrorCode BCApply_FRONT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat 
     PetscFunctionReturn(0);
 }
 
-static PetscErrorCode BCApply_BACK(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+static PetscErrorCode BCApply_BACK(DM da,PetscInt d_idx,PetscScalar *bc_val,Mat A,Vec b)
 {
     DM                     cda;
     Vec                    coords;
@@ -1329,17 +1548,22 @@ static PetscErrorCode BCApply_BACK(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A
     for (k = 0; k < nz; k++) {
         for (i = 0; i < nx; i++) {
             PetscInt local_id;
-            PetscScalar coordx, coordy, coordz;
+            PetscReal pos[NSD],vel[NSD];
+
+            pos[0] = PetscRealPart(_coords[k+sk][j+sj][i+si].x);
+            pos[1] = PetscRealPart(_coords[k+sk][j+sj][i+si].y);
+            pos[2] = PetscRealPart(_coords[k+sk][j+sj][i+si].z);
+
+            evaluate_Elastic(pos,vel,NULL,NULL,0,0);
 
             local_id = j*nx + i + k*nx*ny;
 
             bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
-
-            coordx = _coords[k+sk][j+sj][i+si].x;
-            coordy = _coords[k+sk][j+sj][i+si].y;
-            coordz = _coords[k+sk][j+sj][i+si].z;
-
-            bc_vals[i+k*nx] = bc_val;
+            if (bc_val) {
+                bc_vals[i + k * nx] = *bc_val;
+            } else {
+                bc_vals[i + k * nx] = vel[d_idx];
+            }
         }
     }
     ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
@@ -1362,7 +1586,7 @@ static PetscErrorCode BCApply_BACK(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A
     PetscFunctionReturn(0);
 }
 
-static PetscErrorCode BCApply_LEFT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+static PetscErrorCode BCApply_LEFT(DM da,PetscInt d_idx,PetscScalar *bc_val,Mat A,Vec b)
 {
     DM                     cda;
     Vec                    coords;
@@ -1400,17 +1624,23 @@ static PetscErrorCode BCApply_LEFT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A
     for (k = 0; k < nz; k++) {
         for (j = 0; j < ny; j++) {
             PetscInt local_id;
-            PetscScalar coordx, coordy, coordz;
+            PetscReal pos[NSD],vel[NSD];
+
+            pos[0] = PetscRealPart(_coords[k+sk][j+sj][i+si].x);
+            pos[1] = PetscRealPart(_coords[k+sk][j+sj][i+si].y);
+            pos[2] = PetscRealPart(_coords[k+sk][j+sj][i+si].z);
+
+            evaluate_Elastic(pos,vel,NULL,NULL,0,0);
 
             local_id = j*nx + i + k*nx*ny;
 
-            bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
+            bc_global_ids[j+k*ny] = g_idx[n_dofs * local_id + d_idx];
 
-            coordx = _coords[k+sk][j+sj][i+si].x;
-            coordy = _coords[k+sk][j+sj][i+si].y;
-            coordz = _coords[k+sk][j+sj][i+si].z;
-
-            bc_vals[i+k*nx] = bc_val;
+            if (bc_val) {
+                bc_vals[j + k * ny] = *bc_val;
+            } else {
+                bc_vals[j + k * ny] = vel[d_idx];
+            }
         }
     }
     ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
@@ -1433,7 +1663,7 @@ static PetscErrorCode BCApply_LEFT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A
     PetscFunctionReturn(0);
 }
 
-static PetscErrorCode BCApply_RIGHT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+static PetscErrorCode BCApply_RIGHT(DM da,PetscInt d_idx,PetscScalar *bc_val,Mat A,Vec b)
 {
     DM                     cda;
     Vec                    coords;
@@ -1471,17 +1701,23 @@ static PetscErrorCode BCApply_RIGHT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat 
     for (k = 0; k < nz; k++) {
         for (j = 0; j < ny; j++) {
             PetscInt local_id;
-            PetscScalar coordx, coordy, coordz;
+            PetscReal pos[NSD],vel[NSD];
+
+            pos[0] = PetscRealPart(_coords[k+sk][j+sj][i+si].x);
+            pos[1] = PetscRealPart(_coords[k+sk][j+sj][i+si].y);
+            pos[2] = PetscRealPart(_coords[k+sk][j+sj][i+si].z);
+
+            evaluate_Elastic(pos,vel,NULL,NULL,0,0);
 
             local_id = j*nx + i + k*nx*ny;
 
-            bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
+            bc_global_ids[j+k*ny] = g_idx[n_dofs * local_id + d_idx];
 
-            coordx = _coords[k+sk][j+sj][i+si].x;
-            coordy = _coords[k+sk][j+sj][i+si].y;
-            coordz = _coords[k+sk][j+sj][i+si].z;
-
-            bc_vals[i+k*nx] = bc_val;
+            if (bc_val) {
+                bc_vals[j + k * ny] = *bc_val;
+            } else {
+                bc_vals[j + k * ny] = vel[d_idx];
+            }
         }
     }
     ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
@@ -1504,7 +1740,7 @@ static PetscErrorCode BCApply_RIGHT(DM da,PetscInt d_idx,PetscScalar bc_val,Mat 
     PetscFunctionReturn(0);
 }
 
-static PetscErrorCode BCApply_DOWN(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+static PetscErrorCode BCApply_DOWN(DM da,PetscInt d_idx,PetscScalar *bc_val,Mat A,Vec b)
 {
     DM                     cda;
     Vec                    coords;
@@ -1542,17 +1778,23 @@ static PetscErrorCode BCApply_DOWN(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A
     for (j = 0; j < ny; j++) {
         for (i = 0; i < nx; i++) {
             PetscInt local_id;
-            PetscScalar coordx, coordy, coordz;
+            PetscReal pos[NSD],vel[NSD];
+
+            pos[0] = PetscRealPart(_coords[k+sk][j+sj][i+si].x);
+            pos[1] = PetscRealPart(_coords[k+sk][j+sj][i+si].y);
+            pos[2] = PetscRealPart(_coords[k+sk][j+sj][i+si].z);
+
+            evaluate_Elastic(pos,vel,NULL,NULL,0,0);
 
             local_id = j*nx + i + k*nx*ny;
 
-            bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
+            bc_global_ids[i+j*nx] = g_idx[n_dofs * local_id + d_idx];
 
-            coordx = _coords[k+sk][j+sj][i+si].x;
-            coordy = _coords[k+sk][j+sj][i+si].y;
-            coordz = _coords[k+sk][j+sj][i+si].z;
-
-            bc_vals[i+k*nx] = bc_val;
+            if (bc_val) {
+                bc_vals[i + j * nx] = *bc_val;
+            } else {
+                bc_vals[i + j * nx] = vel[d_idx];
+            }
         }
     }
     ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
@@ -1575,7 +1817,7 @@ static PetscErrorCode BCApply_DOWN(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A
     PetscFunctionReturn(0);
 }
 
-static PetscErrorCode BCApply_UP(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,Vec b)
+static PetscErrorCode BCApply_UP(DM da,PetscInt d_idx,PetscScalar *bc_val,Mat A,Vec b)
 {
     DM                     cda;
     Vec                    coords;
@@ -1613,17 +1855,23 @@ static PetscErrorCode BCApply_UP(DM da,PetscInt d_idx,PetscScalar bc_val,Mat A,V
     for (j = 0; j < ny; j++) {
         for (i = 0; i < nx; i++) {
             PetscInt local_id;
-            PetscScalar coordx, coordy, coordz;
+            PetscReal pos[NSD],vel[NSD];
+
+            pos[0] = PetscRealPart(_coords[k+sk][j+sj][i+si].x);
+            pos[1] = PetscRealPart(_coords[k+sk][j+sj][i+si].y);
+            pos[2] = PetscRealPart(_coords[k+sk][j+sj][i+si].z);
+
+            evaluate_Elastic(pos,vel,NULL,NULL,0,0);
 
             local_id = j*nx + i + k*nx*ny;
 
-            bc_global_ids[i+k*nx] = g_idx[n_dofs * local_id + d_idx];
+            bc_global_ids[i+j*nx] = g_idx[n_dofs * local_id + d_idx];
 
-            coordx = _coords[k+sk][j+sj][i+si].x;
-            coordy = _coords[k+sk][j+sj][i+si].y;
-            coordz = _coords[k+sk][j+sj][i+si].z;
-
-            bc_vals[i+k*nx] = bc_val;
+            if (bc_val) {
+                bc_vals[i + j * nx] = *bc_val;
+            } else {
+                bc_vals[i + j * nx] = vel[d_idx];
+            }
         }
     }
     ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
@@ -1651,7 +1899,28 @@ static PetscErrorCode DMDABCApplyCompression(DM elas_da,Mat A,Vec f)
     PetscErrorCode ierr;
 
     PetscFunctionBeginUser;
-    ierr = BCApply_FRONT(elas_da,0,-1.0,A,f);CHKERRQ(ierr);
-    ierr = BCApply_BACK(elas_da,0,1.0,A,f);CHKERRQ(ierr);
+    ierr = BCApply_FRONT(elas_da,0,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_FRONT(elas_da,1,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_FRONT(elas_da,2,NULL,A,f);CHKERRQ(ierr);
+
+    ierr = BCApply_BACK(elas_da,0,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_BACK(elas_da,1,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_BACK(elas_da,2,NULL,A,f);CHKERRQ(ierr);
+
+    ierr = BCApply_LEFT(elas_da,0,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_LEFT(elas_da,1,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_LEFT(elas_da,2,NULL,A,f);CHKERRQ(ierr);
+
+    ierr = BCApply_RIGHT(elas_da,0,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_RIGHT(elas_da,1,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_RIGHT(elas_da,2,NULL,A,f);CHKERRQ(ierr);
+
+    ierr = BCApply_UP(elas_da,0,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_UP(elas_da,1,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_UP(elas_da,2,NULL,A,f);CHKERRQ(ierr);
+
+    ierr = BCApply_DOWN(elas_da,0,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_DOWN(elas_da,1,NULL,A,f);CHKERRQ(ierr);
+    ierr = BCApply_DOWN(elas_da,2,NULL,A,f);CHKERRQ(ierr);
     PetscFunctionReturn(0);
 }
