@@ -24,6 +24,8 @@ Parameters: \n\
 #include <petscdmda.h>
 #include <petscdm.h>
 
+using namespace std;
+
 static PetscErrorCode DMDABCApplyCompression(DM,Mat,Vec);
 
 /* FEM basic info */
@@ -603,6 +605,21 @@ static void ImposeNaturalBCQ13D(PetscScalar Ge[],PetscScalar coords[],PetscScala
         sigma[1][0] = z[3]; sigma[1][1] = z[1]; sigma[1][2] = z[4];
         sigma[2][0] = z[5]; sigma[2][1] = z[4]; sigma[2][2] = z[2];
 
+        /* debug */
+//        cout << gp_xi[p][0] << " " << gp_xi[p][1] << " " << gp_xi[p][2] << endl;
+//        for (i=0;i<6;i++){
+//            cout << strain[i] << " ";
+//        }
+//        cout << endl;
+//        for (i=0;i<3;i++){
+//            for (j=0;j<3;j++){
+//                cout << sigma[i][j] << " ";
+//            }
+//            cout << endl;
+//        }
+//        cout << endl;
+
+
         /* directional derivative */
         if (p < 4){
             nhat[0] = 1.0; nhat[1] = 0.0; nhat[2] = 0.0;
@@ -946,9 +963,14 @@ static void evaluate_Elastic(PetscReal pos[],PetscReal vel[],PetscReal Fm[],Pets
     y = pos[1];
     z = pos[2];
     if (vel) {
+
         vel[0] = PetscSinReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*PetscSinReal(PETSC_PI*z);
         vel[1] = 0.0;
         vel[2] = 0.0;
+
+//        vel[0] = PetscExpReal(x+2*y+3*z);
+//        vel[1] = x*x*y+y*z+PetscPowRealInt(z,3)*x;
+//        vel[2] = PetscSinReal(x*z+y*y);
     }
     if (Fm) {
         Fm[0] = (E*PETSC_PI*PETSC_PI*PetscSinReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*
@@ -957,6 +979,14 @@ static void evaluate_Elastic(PetscReal pos[],PetscReal vel[],PetscReal Fm[],Pets
                 PetscSinReal(PETSC_PI*z))/(2*(2*nu*nu+nu-1));
         Fm[2] = (E*PETSC_PI*PETSC_PI*PetscCosReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*
                 PetscCosReal(PETSC_PI*z))/(2*(2*nu*nu+nu-1));
+
+//        Fm[0] = (E*(2*x + PetscCosReal(y*y + x*z) + 15.0*PetscExpReal(x + 2*y + 3*z) - 28.0*nu*PetscExpReal(x + 2*y + 3*z)
+//                - x*z*PetscSinReal(y*y + x*z)))/(4*nu*nu + 2*nu - 2);
+//        Fm[1] = (E*(y + PetscExpReal(x + 2*y + 3*z) - 2*nu*y + 3*x*z - x*y*PetscSinReal(y*y + x*z) - 6*nu*x*z))/(2*nu*nu + nu - 1);
+//        Fm[2] = -((E*(nu - 1))/((2*nu - 2)*(nu + 1)) - (E*nu)/((2*nu - 1)*(nu + 1)) + (E*(nu - 1)*(2.0*PetscCosReal(y*y + x*z) -
+//                4*y*y*PetscSinReal(y*y + x*z)))/((2*nu - 2)*(nu + 1)) + (3*E*PetscExpReal(x + 2*y + 3*z)*(nu - 1))/((2*nu - 2)*(nu + 1))
+//                - (3.0*E*nu*PetscExpReal(x + 2*y + 3*z))/((2*nu - 1)*(nu + 1)) - (E*x*x*PetscSinReal(y*y + x*z)*(nu - 1))/((2*nu - 1)*(nu + 1))
+//                - (E*z*z*PetscSinReal(y*y + x*z)*(nu - 1))/((2*nu - 2)*(nu + 1)));
     }
     if (Gm) {
         Gm[0][0] = PETSC_PI*PetscCosReal(PETSC_PI*x)*PetscSinReal(PETSC_PI*y)*PetscSinReal(PETSC_PI*z);
@@ -965,6 +995,19 @@ static void evaluate_Elastic(PetscReal pos[],PetscReal vel[],PetscReal Fm[],Pets
 
         Gm[1][0] = Gm[1][1] = Gm[1][2] = 0;
         Gm[2][0] = Gm[2][1] = Gm[2][2] = 0;
+
+//        Gm[0][0] = PetscExpReal(x+2*y+3*z);
+//        Gm[0][1] = 2.0*PetscExpReal(x+2*y+3*z);
+//        Gm[0][2] = 3.0*PetscExpReal(x+2*y+3*z);
+//
+//        Gm[1][0] = 2.0*x*y+PetscPowRealInt(z,3);
+//        Gm[1][1] = x*x+z;
+//        Gm[1][2] = y+3*z*z*x;
+//
+//        Gm[2][0] = z*PetscCosReal(x*z+y*y);
+//        Gm[2][1] = 2.0*y*PetscCosReal(x*z+y*y);
+//        Gm[2][2] = x*PetscCosReal(x*z+y*y);
+
     }
 }
 
@@ -1294,8 +1337,8 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
                 PetscReal   pos[NSD], Fm[NSD], Gm[NSD][NSD];
                 PetscScalar opts_E, opts_nu;
 
-                opts_E = 1.0;
-                opts_nu = 0.33;
+                opts_E = 90.0;
+                opts_nu = 0.28;
                 ierr = PetscOptionsGetScalar(NULL, NULL, "-iso_E", &opts_E, &flg);CHKERRQ(ierr);
                 ierr = PetscOptionsGetScalar(NULL, NULL, "-iso_nu", &opts_nu, &flg);CHKERRQ(ierr);
 
@@ -1385,6 +1428,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
     ierr = DMDAViewGnuplot3d(elas_da,X,"Displacement solution for elasticity eqn.","X");CHKERRQ(ierr);
     ierr = MatViewFromOptions(A, NULL, "-amat_view");CHKERRQ(ierr);
     ierr = VecViewFromOptions(f, NULL, "-fvec_view");CHKERRQ(ierr);
+    ierr = VecViewFromOptions(X, NULL, "-Xvec_view");CHKERRQ(ierr);
     /* verify */
     DM  da_elastic_analytic;
     Vec X_analytic;
