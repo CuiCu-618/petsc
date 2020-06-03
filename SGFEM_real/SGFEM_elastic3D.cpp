@@ -40,11 +40,12 @@ static PetscErrorCode DMDABCApplyCompression(DM,Mat,Vec);
 #define L1      4 /* number of Heaviside enrichment */
 #define L2      4 /* number of singular enrichment */
 #define type    1 /* type=1: SGFEM; type=0: GFEM */
+#define test_dof 4
 
 /* cell based evaluation */
 typedef struct {
-    PetscScalar E,nu,fx,fy,fz;
-    PetscScalar gx,gy,gz;       /* derivative */
+    PetscInt enrich_type[NODES_PER_EL]; /* node enriched type 0: standard FEM; 1: Heaviside enrichment; 2: Singular enrichment; 3: Both type 1 & 2 */
+    PetscInt n_enrich[NODES_PER_EL];    /* number of enrichment per node */
 } Coefficients;
 
 /* Gauss point based evaluation*/
@@ -61,6 +62,9 @@ typedef struct {
     PetscScalar gx[NSD*GAUSS_POINTS_B];   /* ux_x, ux_y, ux_z */
     PetscScalar gy[NSD*GAUSS_POINTS_B];   /* uy_x, uy_y, uy_z */
     PetscScalar gz[NSD*GAUSS_POINTS_B];   /* uz_x, uz_y, uz_z */
+    /* info for node enrichment */
+    PetscInt enrich_type[NODES_PER_EL]; /* node enriched type 0: standard FEM; 1: Heaviside enrichment; 2: Singular enrichment; 3: Both type 1 & 2 */
+    PetscInt n_enrich[NODES_PER_EL];    /* number of enrichment per node */
 } GaussPointCoefficients;
 
 typedef struct {
@@ -1175,7 +1179,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
     DMDACoor3d             ***_prop_coords,***_vel_coords;
     GaussPointCoefficients ***element_props;
     KSP                    ksp_E;
-    PetscInt               cpu_x,cpu_y,cpu_z,*lx = nullptr,*ly = nullptr,*lz = nullptr;
+    PetscInt               cpu_x,cpu_y,cpu_z,*lx = NULL,*ly = NULL,*lz = NULL;
     PetscBool              flg;
     PetscErrorCode         ierr;
 
@@ -1191,7 +1195,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
     stencil_width = 1;
     ierr          = DMDACreate3d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
                                  DMDA_STENCIL_BOX, mx+1, my+1, mz+1, PETSC_DECIDE,PETSC_DECIDE, PETSC_DECIDE,
-                                 dof, stencil_width, nullptr, nullptr, nullptr, &elas_da);CHKERRQ(ierr);
+                                 dof, stencil_width, NULL, NULL, NULL, &elas_da);CHKERRQ(ierr);
 
     ierr = DMSetMatType(elas_da,MATAIJ);CHKERRQ(ierr);
     ierr = DMSetFromOptions(elas_da);CHKERRQ(ierr);
@@ -1257,6 +1261,12 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
 
                 ierr = GetElementCoords3D(_vel_coords, i, j, k, el_coords);CHKERRQ(ierr);
                 ConstructGaussQuadrature3D(&ngp, gp_xi, gp_weight);
+
+                /* get cell enrichment type */
+                for (p = 0; p < NODES_PER_EL; p++){
+                    element_props[k][j][i].enrich_type[p] = 0;
+                    element_props[k][j][i].n_enrich[p]    = 0;
+                }
 
                 for (p = 0; p < GAUSS_POINTS; p++) {
                     PetscScalar xi_p[NSD], Ni_p[NODES_PER_EL];
@@ -1373,6 +1383,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
     ierr = DMDAVecRestoreArray(vel_cda,vel_coords,&_vel_coords);CHKERRQ(ierr);
 
     ierr = DMDAVecRestoreArray(da_prop,l_properties,&element_props);CHKERRQ(ierr);
+//    ierr = DMDAVecRestoreArray(da_prop,l_properties,&enrich_props);CHKERRQ(ierr);
     ierr = DMLocalToGlobalBegin(da_prop,l_properties,ADD_VALUES,properties);CHKERRQ(ierr);
     ierr = DMLocalToGlobalEnd(da_prop,l_properties,ADD_VALUES,properties);CHKERRQ(ierr);
 
@@ -1403,7 +1414,7 @@ static PetscErrorCode solve_elasticity_3d(PetscInt mx, PetscInt my, PetscInt mz)
 
     ierr = KSPSolve(ksp_E,f,X);CHKERRQ(ierr);
 
-    ierr = DMDAViewGnuplot3d(elas_da,X,"Displacement solution for elasticity eqn.","X");CHKERRQ(ierr);
+//    ierr = DMDAViewGnuplot3d(elas_da,X,"Displacement solution for elasticity eqn.","X");CHKERRQ(ierr);
     ierr = MatViewFromOptions(A, NULL, "-amat_view");CHKERRQ(ierr);
     ierr = VecViewFromOptions(f, NULL, "-fvec_view");CHKERRQ(ierr);
     ierr = VecViewFromOptions(X, NULL, "-Xvec_view");CHKERRQ(ierr);
@@ -1450,6 +1461,137 @@ int main(int argc,char **args)
     ierr = PetscFinalize();
 
     return ierr;
+}
+
+
+static PetscErrorCode GetNodalRedundantDofs(DM da_prop, PetscInt _nenrich[], PetscInt _etype[], PetscInt ind, PetscInt b_ids[])
+{
+    DM                     prop_cda;
+    Vec                    properties, l_properties;
+    GaussPointCoefficients ***element_props;
+    PetscInt               etype, nenrich;
+    PetscInt               p, n = 0;
+    PetscErrorCode         ierr;
+
+    ierr = DMCreateGlobalVector(da_prop, &properties);CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(da_prop, &l_properties);CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(da_prop, l_properties, &element_props);CHKERRQ(ierr);
+
+    etype   = _etype[ind];
+    nenrich = _nenrich[ind];
+
+    switch (etype){
+        case 0: {
+            for (p = U_DOFS; p < test_dof; p++){
+                b_ids[n] = p;
+                n++;
+            }
+            break;
+        }
+        case 1: {
+            break;
+        }
+        case 2: {
+            break;
+        }
+        case 3: {
+            break;
+        }
+        default: {
+            std::cout << "Wrong enrich type!!" << std::endl;
+        }
+    }
+
+    PetscFunctionReturn(0);
+}
+
+/* block redundant dofs */
+static PetscErrorCode BlockRedundantDofs(DM da, DM da_prop ,Mat A, Vec b)
+{
+    DM                     cda, prop_cda;
+    Vec                    coords, prop_coords;
+    GaussPointCoefficients ***element_props;
+    PetscInt               si,sj,sk,nx,ny,nz,i,j,k,p,q;
+    PetscInt               M,N,P;
+    DMDACoor3d             ***_coords, ***_prop_coords;
+    const PetscInt         *g_idx;
+    PetscInt               *b_global_ids, *b_ids, iter = 0;
+    PetscScalar            *b_vals;
+    PetscInt               nbs;
+    PetscInt               n_dofs;
+    PetscErrorCode         ierr;
+    ISLocalToGlobalMapping ltogm;
+    Vec                    properties, l_properties;
+
+    PetscFunctionBeginUser;
+    /* find unused dofs */
+    ierr = DMGetLocalToGlobalMapping(da,&ltogm);CHKERRQ(ierr);
+    ierr = ISLocalToGlobalMappingGetIndices(ltogm,&g_idx);CHKERRQ(ierr);
+
+    ierr = DMCreateGlobalVector(da_prop, &properties);CHKERRQ(ierr);
+    ierr = DMCreateLocalVector(da_prop, &l_properties);CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(da_prop, l_properties, &element_props);CHKERRQ(ierr);
+
+    ierr = DMGetCoordinateDM(da_prop,&prop_cda);CHKERRQ(ierr);
+    ierr = DMGetCoordinatesLocal(da_prop,&prop_coords);CHKERRQ(ierr);
+    ierr = DMDAVecGetArray(prop_cda,prop_coords,&_prop_coords);CHKERRQ(ierr);
+
+    ierr = DMDAGetGhostCorners(prop_cda,&si,&sj,&sk,&nx,&ny,&nz);CHKERRQ(ierr);
+
+//    ierr = DMGetCoordinateDM(da,&cda);CHKERRQ(ierr);
+//    ierr = DMGetCoordinatesLocal(da,&coords);CHKERRQ(ierr);
+//    ierr = DMDAVecGetArray(cda,coords,&_coords);CHKERRQ(ierr);
+//    ierr = DMDAGetGhostCorners(cda,&si,&sj,&sk,&nx,&ny,&nz);CHKERRQ(ierr);
+    ierr = DMDAGetInfo(da,0,&M,&N,&P,0,0,0,&n_dofs,0,0,0,0,0);CHKERRQ(ierr);
+
+    /* --- */
+    nbs = n_dofs - 3;
+
+    ierr = PetscMalloc1(nx*ny*nz*n_dofs,&b_global_ids);CHKERRQ(ierr);
+    ierr = PetscMalloc1(nx*ny*nz*n_dofs,&b_vals);CHKERRQ(ierr);
+    ierr = PetscMalloc1(nbs, &b_ids);CHKERRQ(ierr);
+
+    /* init the entries to -1 so VecSetValues will ignore them */
+    for (i = 0; i < nx*ny*nz*n_dofs; i++) b_global_ids[i] = -1;
+    for (i = 0; i < nbs; i++) b_ids[i] = -1;
+
+    for (k = sk; k < sk+nz; k++){
+        for (j = sj; j < sj+ny; j++){
+            for (i = si; i < si+nx; i++){
+                PetscInt *nenrich, *etype, local_id;
+                /* node 0 */
+                nenrich = element_props[k][j][i].n_enrich;
+                etype   = element_props[k][j][i].enrich_type;
+                local_id = i + j*nx + k*nx*ny;
+                ierr = GetNodalRedundantDofs(da_prop,nenrich,etype,0,b_ids);
+                for (p = 0; p < nbs; p++){
+                    if (b_ids[p] >= 0){
+                        b_global_ids[iter] = n_dofs * local_id + b_ids[p];
+                        iter++;
+                    }
+                }
+            }
+        }
+    }
+
+    ierr = ISLocalToGlobalMappingRestoreIndices(ltogm,&g_idx);CHKERRQ(ierr);
+    nbcs = 0;
+    if (sj == 0) nbcs = nx*nz;
+
+    if (b) {
+        ierr = VecSetValues(b,nbcs,b_global_ids,b_vals,INSERT_VALUES);CHKERRQ(ierr);
+        ierr = VecAssemblyBegin(b);CHKERRQ(ierr);
+        ierr = VecAssemblyEnd(b);CHKERRQ(ierr);
+    }
+    if (A) {
+        ierr = MatZeroRows(A,nbcs,b_global_ids,1.0,0,0);CHKERRQ(ierr);
+    }
+
+    ierr = PetscFree(b_vals);CHKERRQ(ierr);
+    ierr = PetscFree(b_global_ids);CHKERRQ(ierr);
+
+    ierr = DMDAVecRestoreArray(cda,coords,&_coords);CHKERRQ(ierr);
+    PetscFunctionReturn(0);
 }
 
 
